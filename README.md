@@ -1,0 +1,2 @@
+# wiretray
+WireGuard tray utility
