@@ -1,0 +1,24 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Virtual Environments ---
+venv/
+env/
+.env
+
+# --- PyInstaller ---
+build/
+dist/
+*.spec
+
+# --- Debian Packaging ---
+*.deb
+debian/
+
+# --- IDE Settings ---
+.vscode/
+.idea/
+*.swp
