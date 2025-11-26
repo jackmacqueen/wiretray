@@ -3,61 +3,89 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*' # Trigger on version tags like v1.0, v2.3
-  workflow_dispatch: # Allow manual triggering
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            distro: ubuntu22.04
-          - arch: aarch64
-            distro: ubuntu22.04
-
+  # JOB 1: Build for AMD64 (Standard PC) - Runs natively
+  build-amd64:
+    name: Build amd64
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Build on ${{ matrix.arch }}
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          # Install system dependencies required for PyInstaller and Qt
+          sudo apt-get install -y python3 python3-pip python3-venv build-essential libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 libdbus-1-3 wireguard-tools
+          
+          # Install Python libraries
+          pip3 install PyQt6 pyinstaller
+
+      - name: Build Package
+        run: |
+          # Extract version
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION="0.0.1-dev"
+          fi
+          
+          echo "Building version $VERSION for amd64..."
+          chmod +x package_app.sh
+          ./package_app.sh $VERSION
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiretray-amd64
+          path: "*.deb"
+
+  # JOB 2: Build for ARM64 (Raspberry Pi) - Runs via QEMU Emulation
+  build-arm64:
+    name: Build aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build via QEMU
         uses: uraimo/run-on-arch-action@v2
         with:
-          arch: ${{ matrix.arch }}
-          distro: ${{ matrix.distro }}
+          arch: aarch64
+          distro: ubuntu22.04
           githubToken: ${{ github.token }}
           
-          # Install dependencies inside the container
+          # Install dependencies inside the ARM container
           install: |
             apt-get update
             apt-get install -y python3 python3-pip python3-venv build-essential libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 libdbus-1-3 wireguard-tools
             pip3 install PyQt6 pyinstaller
 
-          # Run the build script
+          # Run the build script inside the ARM container
           run: |
-            # Extract version from tag (e.g., v1.0 -> 1.0)
             if [[ $GITHUB_REF == refs/tags/* ]]; then
               VERSION=${GITHUB_REF#refs/tags/v}
             else
               VERSION="0.0.1-dev"
             fi
             
-            echo "Building version $VERSION for ${{ matrix.arch }}..."
-            
+            echo "Building version $VERSION for aarch64..."
             chmod +x package_app.sh
             ./package_app.sh $VERSION
 
-      - name: Upload Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wiretray-${{ matrix.arch }}
+          name: wiretray-aarch64
           path: "*.deb"
 
+  # JOB 3: Release
   release:
     name: Create Release
-    needs: build
+    needs: [build-amd64, build-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
