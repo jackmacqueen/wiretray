@@ -26,7 +26,10 @@ if ! command -v pyinstaller &> /dev/null; then
 fi
 
 echo "Building standalone binary with PyInstaller..."
-pyinstaller --noconfirm --onefile --windowed --clean --name "$PACKAGE_NAME" "$SOURCE_SCRIPT"
+# UPDATED: Added --add-data to bundle the SVG icon inside the binary
+pyinstaller --noconfirm --onefile --windowed --clean \
+            --add-data "icon.svg:." \
+            --name "$PACKAGE_NAME" "$SOURCE_SCRIPT"
 
 # Verify build succeeded
 if [ ! -f "dist/$PACKAGE_NAME" ]; then
@@ -40,6 +43,8 @@ BUILD_DIR="build/${PACKAGE_NAME}_${VERSION}_${ARCH}"
 mkdir -p "$BUILD_DIR/DEBIAN"
 mkdir -p "$BUILD_DIR/usr/local/bin"
 mkdir -p "$BUILD_DIR/usr/share/applications"
+# UPDATED: Create pixmaps directory for the system icon
+mkdir -p "$BUILD_DIR/usr/share/pixmaps"
 
 echo "Creating directory structure for $MENU_NAME (v$VERSION) [$ARCH]..."
 
@@ -47,7 +52,11 @@ echo "Creating directory structure for $MENU_NAME (v$VERSION) [$ARCH]..."
 cp "dist/$PACKAGE_NAME" "$BUILD_DIR/usr/local/bin/$PACKAGE_NAME"
 chmod 755 "$BUILD_DIR/usr/local/bin/$PACKAGE_NAME"
 
-# 2. Create the Control file (Metadata)
+# 2. UPDATED: Copy the Icon for the System Menu
+# We rename it to match the PACKAGE_NAME so the .desktop file finds it easily
+cp "icon.svg" "$BUILD_DIR/usr/share/pixmaps/$PACKAGE_NAME.svg"
+
+# 3. Create the Control file (Metadata)
 cat <<EOF > "$BUILD_DIR/DEBIAN/control"
 Package: $PACKAGE_NAME
 Version: $VERSION
@@ -60,7 +69,7 @@ Description: $DESCRIPTION
  A system tray application to toggle WireGuard interfaces.
 EOF
 
-# 3. Create the Post-Installation Script
+# 4. Create the Post-Installation Script
 cat <<EOF > "$BUILD_DIR/DEBIAN/postinst"
 #!/bin/bash
 set -e
@@ -84,7 +93,7 @@ EOF
 
 chmod 755 "$BUILD_DIR/DEBIAN/postinst"
 
-# 4. Create the Post-Removal Script
+# 5. Create the Post-Removal Script
 cat <<EOF > "$BUILD_DIR/DEBIAN/postrm"
 #!/bin/bash
 set -e
@@ -99,19 +108,20 @@ EOF
 
 chmod 755 "$BUILD_DIR/DEBIAN/postrm"
 
-# 5. Create the .desktop file
+# 6. Create the .desktop file
 cat <<EOF > "$BUILD_DIR/usr/share/applications/$PACKAGE_NAME.desktop"
 [Desktop Entry]
 Name=$MENU_NAME
 Comment=$DESCRIPTION
 Exec=/usr/local/bin/$PACKAGE_NAME
-Icon=network-vpn
+# UPDATED: Use the package name (which maps to the file in /usr/share/pixmaps)
+Icon=$PACKAGE_NAME
 Terminal=false
 Type=Application
 Categories=Network;Utility;
 EOF
 
-# 6. Build the .deb package
+# 7. Build the .deb package
 DEB_FILE="${PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
 dpkg-deb --build "$BUILD_DIR" "$DEB_FILE"
 rm -rf build dist "$PACKAGE_NAME.spec"

@@ -4,19 +4,33 @@ import subprocess
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
                              QWidget, QSystemTrayIcon, QMenu, QPushButton, 
                              QMessageBox, QListWidget, QListWidgetItem, QHBoxLayout)
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtGui import QAction, QIcon, QPainter, QColor
 from PyQt6.QtCore import QSize, QTimer, Qt
 
 # Configuration
 WG_DIR = "/etc/wireguard"
 
+# --- HELPER FUNCTION ---
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # Initial Icon Load
+        self.setWindowIcon(QIcon(resource_path("icon.svg")))
+
         self.setWindowTitle("WireTray")
         self.setMinimumSize(QSize(400, 450))
-        self.configs = [] # List of config names (e.g., ['wg0', 'wg1'])
+        self.configs = [] 
 
         # --- GUI Setup ---
         central_widget = QWidget()
@@ -58,14 +72,12 @@ class MainWindow(QMainWindow):
 
         # --- System Tray Setup ---
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self.create_status_icon(False))
         
-        # We build the menu dynamically in update_tray_menu
+        # Initialize menu
         self.tray_menu = QMenu()
         self.tray_icon.setContextMenu(self.tray_menu)
         self.tray_icon.show()
 
-        # Handle clicking the icon itself (Left click)
         self.tray_icon.activated.connect(self.on_tray_icon_click)
 
         # --- Timer for Status Updates ---
@@ -84,8 +96,6 @@ class MainWindow(QMainWindow):
         
         try:
             if not os.path.exists(WG_DIR):
-                # We can't use MessageBox here easily if it runs on startup loop, 
-                # so we show error in list
                 item = QListWidgetItem("Error: /etc/wireguard not found")
                 self.list_widget.addItem(item)
                 return
@@ -98,10 +108,8 @@ class MainWindow(QMainWindow):
                     
             self.configs.sort()
             
-            # Populate List Widget
             for config in self.configs:
                 item = QListWidgetItem(config)
-                # FIX: Store the "clean" name in hidden data so we don't break it when changing text
                 item.setData(Qt.ItemDataRole.UserRole, config) 
                 self.list_widget.addItem(item)
                 
@@ -115,10 +123,8 @@ class MainWindow(QMainWindow):
         """Rebuilds the tray menu with available configs."""
         self.tray_menu.clear()
         
-        # Add Actions for each config
         for config in self.configs:
             action = QAction(config, self)
-            # We use a lambda with default arg to capture the specific config string
             action.triggered.connect(lambda checked, c=config: self.toggle_vpn(c))
             self.tray_menu.addAction(action)
 
@@ -136,17 +142,12 @@ class MainWindow(QMainWindow):
         return os.path.exists(f"/sys/class/net/{interface}")
 
     def update_status(self):
-        """Checks status of all configs and updates UI."""
         any_active = False
         
-        # 1. Update List Widget
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
-            
-            # FIX: Retrieve the clean name from hidden data
             name = item.data(Qt.ItemDataRole.UserRole)
             
-            # Skip items that aren't configs (like error messages)
             if not name:
                 continue
                 
@@ -155,21 +156,16 @@ class MainWindow(QMainWindow):
                 any_active = True
                 item.setIcon(QIcon.fromTheme("network-transmit-receive"))
                 item.setText(f"{name} (Active)")
-                item.setForeground(QColor("#4CAF50")) # Green text
+                item.setForeground(QColor("#4CAF50"))
             else:
                 item.setIcon(QIcon.fromTheme("network-offline"))
                 item.setText(name)
-                # Reset color based on theme (light/dark mode safe-ish)
-                item.setForeground(QColor(0,0,0) if self.palette().windowText().color().lightness() < 128 else QColor(255,255,255))
+                # Use theme-aware text color for list items
+                item.setForeground(QColor(0,0,0) if self.get_is_light_theme() else QColor(255,255,255))
 
-        # 2. Update Tray Menu Text/Icons
         actions = self.tray_menu.actions()
         for action in actions:
-            # We check if the action text starts with a known config name
-            # This is a bit loose, but works since we rebuild menu on scan
-            # A cleaner way would be to store data in actions too, but this works.
             current_text = action.text()
-            # Strip existing status to find the name
             clean_name = current_text.replace("  [Active]", "")
             
             if clean_name in self.configs:
@@ -179,34 +175,46 @@ class MainWindow(QMainWindow):
                 else:
                     action.setText(f"{clean_name}")
 
-        # 3. Update Main Tray Icon
         self.tray_icon.setIcon(self.create_status_icon(any_active))
         self.setWindowIcon(self.create_status_icon(any_active))
 
+    def get_is_light_theme(self):
+        return self.palette().color(self.palette().ColorRole.WindowText).lightness() < 128
+
     def create_status_icon(self, active):
-        base_icon = QIcon.fromTheme("network-vpn")
+        
+        icon_path = resource_path("icon.svg")
+        base_icon = QIcon(icon_path)
         if base_icon.isNull():
-            base_icon = QIcon.fromTheme("network-wired")
+            base_icon = QIcon.fromTheme("network-vpn")
 
         pixmap = base_icon.pixmap(64, 64)
+        
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Dot color
-        color = QColor("#4CAF50") if active else QColor("#F44336") 
+        is_light_mode = self.get_is_light_theme()
         
-        painter.setBrush(color)
+        icon_color = QColor("black") if is_light_mode else QColor("white")
+        
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(pixmap.rect(), icon_color)
+
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        
+        dot_color = QColor("#4CAF50") if active else QColor("#F44336") 
+        painter.setBrush(dot_color)
         painter.setPen(Qt.PenStyle.NoPen)
         
         dot_size = 24
         x = 64 - dot_size
         y = 64 - dot_size
         painter.drawEllipse(x, y, dot_size, dot_size)
+        
         painter.end()
         return QIcon(pixmap)
 
     def on_list_double_click(self, item):
-        # FIX: Use data instead of text splitting
         name = item.data(Qt.ItemDataRole.UserRole)
         if name and name in self.configs:
             self.toggle_vpn(name)
@@ -214,7 +222,6 @@ class MainWindow(QMainWindow):
     def toggle_selected(self):
         current_item = self.list_widget.currentItem()
         if current_item:
-            # FIX: Use data instead of text splitting
             name = current_item.data(Qt.ItemDataRole.UserRole)
             if name and name in self.configs:
                 self.toggle_vpn(name)
@@ -227,14 +234,12 @@ class MainWindow(QMainWindow):
         
         try:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            
             result = subprocess.run(cmd_list, capture_output=True, text=True)
             
             if result.returncode != 0:
                 QApplication.restoreOverrideCursor()
                 QMessageBox.critical(self, "Error", f"Failed to toggle {interface}:\n{result.stderr}")
             else:
-                # Force immediate update
                 self.update_status()
                 
         except Exception as e:
